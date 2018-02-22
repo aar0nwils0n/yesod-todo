@@ -31,6 +31,8 @@ dependencies:
 - aeson
 - bytestring
 - http-types
+- text
+- wai
 
 library:
   source-dirs: src
@@ -47,6 +49,7 @@ default-extensions:
 - GeneralizedNewtypeDeriving
 - ViewPatterns
 - FlexibleInstances
+- DeriveGeneric
 
 executables:
   crud-exe:
