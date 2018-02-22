@@ -69,16 +69,22 @@ instance YesodPersist TodoApp where
         let pool = connPool master
         runSqlPool f pool
 
+sendSuccess :: (ToJSON a) => a -> HandlerT TodoApp IO String
+sendSuccess x = sendResponseStatus (mkStatus 200 "") $ RepJson $ toContent $ (C.unpack $ encode x)
+
 postTodoR :: Handler String
 postTodoR = do
     todo <- requireJsonBody
-    _ <- runDB $ insert (todo :: Todo)
-    sendResponseStatus (mkStatus 200 "") $ RepJson $ toContent $ (C.unpack $ encode todo)
+    todoId <- runDB $ insert (todo :: Todo)
+    sendSuccess Entity {
+        entityKey = todoId
+        , entityVal = todo
+    }
 
 getTodoR  :: Handler String 
 getTodoR = do
     entries <- runDB $ selectList [] [Desc TodoOrder]
-    return . C.unpack $ encode entries
+    sendSuccess entries
 
 main :: IO ()
 main = do
