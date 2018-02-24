@@ -33,6 +33,7 @@ dependencies:
 - http-types
 - text
 - wai
+- esqueleto
 
 library:
   source-dirs: src

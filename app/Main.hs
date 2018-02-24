@@ -1,6 +1,6 @@
 module Main where
 
-import Yesod
+import Yesod as Y
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Conduit (Manager, newManager)
 import Database.Persist.Sqlite
@@ -20,12 +20,14 @@ import Network.Wai (requestHeaders)
 import Data.Aeson
 import GHC.Generics
 import Prelude as P
+import Database.Esqueleto as E
+import Data.Maybe (fromJust)
 
 share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
     Todo json
         text String
         complete Bool
-        order Int
+        order Int Maybe
     |]
 
 data TodoApp = TodoApp
@@ -36,18 +38,31 @@ data TodoApp = TodoApp
 
 mkYesod "TodoApp" [parseRoutes|
 /todo           TodosR POST GET
-/todo/#TodoId    TodoR GET PUT
+/todo/#TodoId    TodoR GET PUT PATCH
 |]
 
 data ErrBody = ErrBody {
     message :: Text
     , success :: Bool
     } deriving (Generic, Show)
-    
+
+instance ToJSON ErrBody
+
+data PatchPayload = PatchPayload {
+    patchText :: Maybe String
+    , patchComplete :: Maybe Bool
+    , patchOrder :: Maybe Int
+    } deriving (Generic, Show)
+
+instance FromJSON PatchPayload where
+    parseJSON = withObject "PatchPayload" $ \v -> PatchPayload
+        <$> v .:? "text" .!= Nothing
+        <*> v .:? "complete" .!= Nothing
+        <*> v .:? "order" .!= Nothing 
+
 sendJSONRes :: (ToJSON a) => a -> Int -> HandlerT TodoApp IO String
 sendJSONRes x code = sendResponseStatus (mkStatus code "") $ RepJson $ toContent $ (C.unpack $ encode x)
     
-instance ToJSON ErrBody
 
 instance Yesod TodoApp where
     approot = ApprootStatic "http://localhost:3000"
@@ -90,9 +105,23 @@ postTodosR = do
         , entityVal = todo
     }
 
+patchTodo key todo = E.update $ \p -> do
+    set p [ TodoOrder E.=. coalesce [val . patchOrder $ todo, p ^. TodoOrder]
+        , TodoText E.=. coalesceDefault [val . patchText $ todo] (p ^. TodoText)
+        , TodoComplete E.=. coalesceDefault [val . patchComplete $ todo] (p ^. TodoComplete) ]
+    where_ (p ^. TodoId E.==. val key)
+    
+
+patchTodoR :: Key Todo -> Handler String
+patchTodoR key = do
+    todo <- requireJsonBody
+    _ <- runDB $ patchTodo key todo 
+    getTodoR key
+
+
 getTodoR :: Key Todo -> Handler String
 getTodoR key = do
-    todo <- runDB $ selectList [TodoId ==. key] [LimitTo 1]
+    todo <- runDB $ selectList [TodoId Y.==. key] [LimitTo 1]
     if P.length todo == 1 then sendSuccess $ todo !! 0
     else sendBadReq $ ErrBody "Todo does not exist" False
 
@@ -105,7 +134,6 @@ putTodoR todoId = do
         , entityVal = todo
     }
      
--- patchTodosR :: Key Todo -> Handler String
 
 getTodosR :: Handler String 
 getTodosR = do
