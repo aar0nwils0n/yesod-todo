@@ -19,6 +19,7 @@ import Control.Monad (when)
 import Network.Wai (requestHeaders)
 import Data.Aeson
 import GHC.Generics
+import Prelude as P
 
 share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
     Todo json
@@ -34,13 +35,17 @@ data TodoApp = TodoApp
     }
 
 mkYesod "TodoApp" [parseRoutes|
-/todo              TodoR POST GET
+/todo           TodosR POST GET
+/todo/#TodoId    TodoR GET PUT
 |]
 
 data ErrBody = ErrBody {
     message :: Text
     , success :: Bool
     } deriving (Generic, Show)
+    
+sendJSONRes :: (ToJSON a) => a -> Int -> HandlerT TodoApp IO String
+sendJSONRes x code = sendResponseStatus (mkStatus code "") $ RepJson $ toContent $ (C.unpack $ encode x)
     
 instance ToJSON ErrBody
 
@@ -69,11 +74,15 @@ instance YesodPersist TodoApp where
         let pool = connPool master
         runSqlPool f pool
 
-sendSuccess :: (ToJSON a) => a -> HandlerT TodoApp IO String
-sendSuccess x = sendResponseStatus (mkStatus 200 "") $ RepJson $ toContent $ (C.unpack $ encode x)
 
-postTodoR :: Handler String
-postTodoR = do
+sendSuccess :: (ToJSON a) => a -> HandlerT TodoApp IO String
+sendSuccess x = sendJSONRes x 200
+
+sendBadReq :: (ToJSON a) => a -> HandlerT TodoApp IO String
+sendBadReq x = sendJSONRes x 500
+
+postTodosR :: Handler String
+postTodosR = do
     todo <- requireJsonBody
     todoId <- runDB $ insert (todo :: Todo)
     sendSuccess Entity {
@@ -81,8 +90,25 @@ postTodoR = do
         , entityVal = todo
     }
 
-getTodoR  :: Handler String 
-getTodoR = do
+getTodoR :: Key Todo -> Handler String
+getTodoR key = do
+    todo <- runDB $ selectList [TodoId ==. key] [LimitTo 1]
+    if P.length todo == 1 then sendSuccess $ todo !! 0
+    else sendBadReq $ ErrBody "Todo does not exist" False
+
+putTodoR :: Key Todo -> Handler String
+putTodoR todoId = do
+    todo <- requireJsonBody
+    updated <- runDB $ repsert todoId (todo :: Todo)
+    sendSuccess Entity {
+        entityKey = todoId
+        , entityVal = todo
+    }
+     
+-- patchTodosR :: Key Todo -> Handler String
+
+getTodosR :: Handler String 
+getTodosR = do
     entries <- runDB $ selectList [] [Desc TodoOrder]
     sendSuccess entries
 
